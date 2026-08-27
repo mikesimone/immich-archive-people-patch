@@ -10,12 +10,13 @@
 # This is the same watch-and-react pattern as restart-on-immich-restart.sh, just reacting with
 # a re-patch instead of a captioner bounce.
 #
-# The backend patch is idempotent and itself issues the one restart needed to load a
-# freshly-applied patch; that restart re-triggers this same "start" event, but the second pass
-# finds it already applied and does nothing further, so this does not loop. The frontend patch
-# needs no restart (static files are read from disk per request) and is independently
-# idempotent (its target pattern no longer matches once patched), so running it every pass --
-# including the extra pass triggered by the backend patch's own restart -- is harmless.
+# Both patches are idempotent and each may issue its own restart the first time it actually
+# applies something (the backend patch always restarts to load its change; the frontend patch
+# restarts only for the index.html hop of its rename cascade, since that file is served from
+# an in-memory copy read at startup, unlike the plain-static chunk files it renames first).
+# Either restart re-triggers this same "start" event, but on the next pass each patch finds
+# its own target already applied and does nothing further -- so two patches each
+# self-restarting once converges in at most a few passes, not an unbounded loop.
 set -euo pipefail
 
 IMMICH_CONTAINER="${IMMICH_CONTAINER:-immich_server}"

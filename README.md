@@ -54,16 +54,27 @@ across restarts and upgrades.
 
 - **`patch_immich_archive_people_frontend.py`** (frontend) — finds the built chunk containing
   the person page's hardcoded visibility filter (by content, not by its hash-named filename,
-  since that hash changes on every build) and removes just the `visibility:` key from that
-  object literal, then regenerates its precompressed `.br`/`.gz` siblings (the static file
-  server prefers these over the plain `.js` when present — skipping this step would leave the
-  patch invisible to browsers even though the file on disk is correct; there's no `brotli` CLI
-  in the image, so this uses Node's built-in `zlib`, which is guaranteed present). No restart
-  needed — static files are read from disk per request. Also idempotent, also fails loudly
-  (reports "no matching chunk found" rather than guessing). One caveat inherent to the
-  mechanism, not this script: `/_app/immutable/` is served with long-lived cache headers by
-  design, so a browser that already loaded the old chunk needs a hard refresh to see the fix,
-  even though it's live server-side immediately.
+  since that hash changes on every build) and removes the `visibility:` key from that object
+  literal. `/_app/immutable/` is served `Cache-Control: public,max-age=31536000,immutable` —
+  a year, with no revalidation even on a normal reload — so editing the file's *content* while
+  keeping its *name* would fix the server but leave every client that already loaded that exact
+  URL stuck on a stale cached copy indefinitely, no ordinary refresh able to fix it. Instead
+  this script actually **renames** the patched file (a new URL is a guaranteed cache miss) and
+  cascades that rename upward through whatever references it — one hop at a time — until it
+  reaches a file that *isn't* immutably cached. In practice that's exactly two hops: the node
+  chunk is imported by one entry chunk, which is referenced only by `index.html`, and
+  `index.html` is served `Cache-Control: no-store`. Once its content points at the new entry
+  filename, every client picks up the whole fixed chain on their next *normal* page load — no
+  hard refresh, no cache clearing, no user action. It also regenerates precompressed `.br`/`.gz`
+  siblings at each renamed file (no `brotli` CLI in the image, so this uses Node's built-in
+  `zlib`) and cleans up the orphaned pre-rename files once the cascade succeeds, so a later run
+  doesn't find them still matching and try to redo the cascade from a stale starting point.
+  `index.html`'s edit needs one container restart to take effect (unlike the plain chunk files,
+  which are read from disk per request, Immich serves `index.html` from an in-memory copy read
+  once at startup) — the script issues that restart itself. Idempotent (checks whether the
+  chunk `index.html` *currently* references still has the bug) and fails loudly at every step
+  (wrong number of referencing files, chain doesn't resolve within a few hops, etc. all abort
+  cleanly without touching anything further) rather than guessing.
 
 - **`reapply-archive-people-patch-on-restart.sh`** — a small watcher (meant to run as a
   systemd service) that reacts to `immich_server` **starting** and re-applies both patches.
@@ -71,9 +82,9 @@ across restarts and upgrades.
   layer, not the image, so they're lost on every restart and every upgrade (which recreates
   the container from a fresh, unpatched image). The watcher makes them durable across both,
   including unattended auto-upgrade setups — verified end-to-end by simulating a fresh
-  unpatched restart of both and confirming they self-heal without manual intervention, with no
-  restart loop (the backend patch's own restart re-triggers the watcher, which finds both
-  already applied on the second pass and stops).
+  unpatched restart of both and confirming they self-heal without manual intervention. Either
+  patch's own restart re-triggers the watcher, but each converges (finds its target already
+  applied and stops) within a few passes rather than looping.
 
 ## Install
 
@@ -118,8 +129,8 @@ curl -s -H "x-api-key: $IMMICH_API_KEY" "$IMMICH_URL/api/timeline/buckets?person
   | python3 -c "import json,sys; print(sum(b['count'] for b in json.load(sys.stdin)))"
 ```
 
-Then hard-refresh their `/people/{id}` page in the browser (see the caching caveat above) and
-confirm their photos actually render.
+Then just load their `/people/{id}` page in the browser — no hard refresh needed, per the
+cache-busting cascade described above — and confirm their photos actually render.
 
 ## Caveats
 
