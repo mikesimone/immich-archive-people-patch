@@ -1,0 +1,14 @@
+[Unit]
+Description=Reapply the archive-visibility People patch whenever immich_server restarts
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+# Adjust this path to wherever you cloned this repo.
+ExecStart=/opt/immich-archive-people-patch/reapply-archive-people-patch-on-restart.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
