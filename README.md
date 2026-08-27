@@ -2,22 +2,22 @@
 
 Fixes a real limitation in [Immich](https://github.com/immich-app/immich)'s People feature:
 **anyone whose only tagged photos are archived is silently hidden from the People page, the
-face-tagging name-suggestion list, and their own "X photos" count** — even though the tag
-itself works perfectly (it's fully saved, searchable, and functional).
+face-tagging name-suggestion list, their own "X photos" count, and even their own person-detail
+page** — even though the tag itself works perfectly (it's fully saved, searchable, and
+functional).
 
 Not affiliated with Immich. Tested against Immich v3.1.0.
 
-## The bug
+## The bugs
 
 Tag a face in an archived album and the name works everywhere it's *used* — search by
-person, direct lookup by ID, everything. But open the People page, or start typing a name
-into the tagging dropdown while working in a different album, and that person is just... not
-there. It looks like the tag got lost. It didn't.
+person, direct lookup by ID, everything. But the parts of the UI meant for *browsing* by
+person quietly drop archived content, in two independent places:
 
-The actual cause, found by reading Immich's compiled server source directly
-(`dist/repositories/person.repository.js`): three queries that back the People feature —
-the main listing (`getAllForUser`), a person's photo count (`getStatistics`), and the
-total/hidden counts returned by `GET /api/people` (`getNumberOfPeople`) — all `INNER JOIN`
+**1. The People page, tagging suggestions, and photo counts** (backend). Found by reading
+Immich's compiled server source directly (`dist/repositories/person.repository.js`): three
+queries — the main listing (`getAllForUser`), a person's photo count (`getStatistics`), and
+the total/hidden counts returned by `GET /api/people` (`getNumberOfPeople`) — all `INNER JOIN`
 `asset_face` to `asset` with a hardcoded
 
 ```ts
@@ -25,15 +25,26 @@ total/hidden counts returned by `GET /api/people` (`getNumberOfPeople`) — all 
 ```
 
 A person whose *only* tagged faces sit on `archive`-visibility assets produces zero matching
-rows in that join and is excluded outright — not deprioritized, not hidden-but-findable,
-just absent from the result set, with no API parameter to ask for anything else.
+rows in that join and is excluded outright — not deprioritized, not hidden-but-findable, just
+absent from the result set, with no API parameter to ask for anything else.
+
+**2. The person's own page** (`/people/{id}`, frontend). Even once a person shows up in the
+People list, clicking into them can still show zero photos. This one isn't a backend
+restriction at all — the backend's timeline-bucket endpoint (`GET /api/timeline/buckets`)
+happily returns archived assets when no `visibility` filter is sent. The person page's own
+Svelte component just always sends one anyway: its asset-fetch options are hardcoded as
+`{ visibility: AssetVisibility.Timeline, personId: ... }`. Found by grepping the *built*
+frontend bundle (`/build/www/_app/immutable/nodes/*.js` inside the container) for the compiled
+form of that object literal, since this is compiled/minified Svelte output, not readable
+TypeScript source.
 
 ## The fix
 
-This is a **runtime patch applied to the already-running container's compiled JavaScript** —
-not a fork, not a custom Docker image, no Node/pnpm build toolchain required. Two pieces:
+Two **runtime patches applied to the already-running container** — not a fork, not a custom
+Docker image, no Node/pnpm build toolchain required — plus a watcher that keeps both applied
+across restarts and upgrades.
 
-- **`patch_immich_archive_people.py`** — copies `person.repository.js` out of the
+- **`patch_immich_archive_people.py`** (backend) — copies `person.repository.js` out of the
   `immich_server` container, removes the three `visibility = Timeline` clauses via precise
   string replacement, copies it back, and restarts the container to load it. Idempotent
   (checks for a marker comment before touching anything) and **fails loudly** — if a future
@@ -41,25 +52,39 @@ not a fork, not a custom Docker image, no Node/pnpm build toolchain required. Tw
   pattern it couldn't find and leaves the file untouched, rather than silently corrupting it
   or no-op'ing without telling you.
 
+- **`patch_immich_archive_people_frontend.py`** (frontend) — finds the built chunk containing
+  the person page's hardcoded visibility filter (by content, not by its hash-named filename,
+  since that hash changes on every build) and removes just the `visibility:` key from that
+  object literal, then regenerates its precompressed `.br`/`.gz` siblings (the static file
+  server prefers these over the plain `.js` when present — skipping this step would leave the
+  patch invisible to browsers even though the file on disk is correct; there's no `brotli` CLI
+  in the image, so this uses Node's built-in `zlib`, which is guaranteed present). No restart
+  needed — static files are read from disk per request. Also idempotent, also fails loudly
+  (reports "no matching chunk found" rather than guessing). One caveat inherent to the
+  mechanism, not this script: `/_app/immutable/` is served with long-lived cache headers by
+  design, so a browser that already loaded the old chunk needs a hard refresh to see the fix,
+  even though it's live server-side immediately.
+
 - **`reapply-archive-people-patch-on-restart.sh`** — a small watcher (meant to run as a
-  systemd service) that reacts to `immich_server` **starting** and re-applies the patch. This
-  is the part that matters for real use: the patch lives in the container's writable layer,
-  not the image, so it's lost on every restart and every upgrade (which recreates the
-  container from a fresh, unpatched image). The watcher makes it durable across both,
+  systemd service) that reacts to `immich_server` **starting** and re-applies both patches.
+  This is the part that matters for real use: both patches live in the container's writable
+  layer, not the image, so they're lost on every restart and every upgrade (which recreates
+  the container from a fresh, unpatched image). The watcher makes them durable across both,
   including unattended auto-upgrade setups — verified end-to-end by simulating a fresh
-  unpatched restart and confirming it self-heals without manual intervention, with no restart
-  loop (the patch's own restart re-triggers the watcher, which finds the marker already
-  present on the second pass and stops).
+  unpatched restart of both and confirming they self-heal without manual intervention, with no
+  restart loop (the backend patch's own restart re-triggers the watcher, which finds both
+  already applied on the second pass and stops).
 
 ## Install
 
 ```
 git clone https://github.com/<you>/immich-archive-people-patch.git
 cd immich-archive-people-patch
-python3 patch_immich_archive_people.py   # applies it right now
+python3 patch_immich_archive_people.py            # applies the backend fix right now
+python3 patch_immich_archive_people_frontend.py    # applies the frontend fix right now
 ```
 
-Then install the watcher so it survives restarts/upgrades:
+Then install the watcher so both survive restarts/upgrades:
 
 ```
 sudo cp systemd/immich-archive-people-patch-watcher.service /etc/systemd/system/
@@ -74,6 +99,8 @@ top of `reapply-archive-people-patch-on-restart.sh`).
 
 ## Verifying it worked
 
+Backend fix — People totals should match the database:
+
 ```
 curl -s -H "x-api-key: $IMMICH_API_KEY" "$IMMICH_URL/api/people?withHidden=true" \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print('total:', d['total'])"
@@ -83,21 +110,34 @@ Compare that `total` against a direct database count of named people
 (`SELECT count(*) FROM person WHERE name != ''`) — before the patch these will disagree if
 you have anyone tagged only in archived content; after, they should match.
 
+Frontend fix — a person tagged only in archived photos should get a nonzero bucket count with
+no `visibility` param (this is exactly the request the patched person page now makes):
+
+```
+curl -s -H "x-api-key: $IMMICH_API_KEY" "$IMMICH_URL/api/timeline/buckets?personId=<their-id>" \
+  | python3 -c "import json,sys; print(sum(b['count'] for b in json.load(sys.stdin)))"
+```
+
+Then hard-refresh their `/people/{id}` page in the browser (see the caching caveat above) and
+confirm their photos actually render.
+
 ## Caveats
 
-- This edits compiled output, not source — it's a patch, not a proper fix. If you want the
-  real fix (an `includeArchived`-style option in the actual query, mirroring the existing
-  `withHidden` toggle), that belongs in a PR to Immich itself. Note that Immich's own
+- Both patches edit compiled/built output, not source — they're patches, not a proper fix. If
+  you want the real fix (an `includeArchived`-style option in the backend query, mirroring the
+  existing `withHidden` toggle, and the frontend actually exposing it), that belongs in a PR to
+  Immich itself. Note that Immich's own
   [contribution guidelines](https://github.com/immich-app/immich/blob/main/CONTRIBUTING.md)
   explicitly ask contributors not to submit LLM-generated PRs, so if you want to pursue that,
   it needs to be your own patch, reviewed and understood by you, not just this repo's
   generated diff.
-- Scoped deliberately narrow: only the three People-listing queries are touched. It doesn't
-  touch how the automatic facial-recognition job prioritizes archived vs. timeline faces for
-  clustering, general asset search visibility defaults, or anything else.
-- If Immich changes this query in a future release, the patch script will tell you clearly
-  that it failed to find its target pattern rather than doing something wrong silently. If
-  that happens, open an issue here (or send a PR) with the new query text and it's a small fix.
+- Scoped deliberately narrow: only the three People-listing queries and the one person-page
+  fetch are touched. Neither patch changes how the automatic facial-recognition job
+  prioritizes archived vs. timeline faces for clustering, general asset search visibility
+  defaults, or anything else.
+- If Immich changes the targeted code in a future release, both scripts will tell you clearly
+  that they failed to find their target pattern rather than doing something wrong silently. If
+  that happens, open an issue here (or send a PR) with the new code and it's a small fix.
 
 ## License
 
