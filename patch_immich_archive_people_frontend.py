@@ -76,6 +76,9 @@ MAX_HOPS = 5
 # this pattern must both stick to POSIX-safe character classes.
 TARGET_RE = re.compile(r"visibility:[A-Za-z_$][A-Za-z0-9_$]*\.Timeline,personId:")
 REPLACEMENT = "personId:"
+# Immich 3.2.x no longer sends visibility here (so this finds nothing) but adds
+# withPartners: true, which the server used to reject for archived assets --
+# patch_immich_archive_partners.py fixes that on the server side, keeping partner sharing.
 
 
 def log(msg: str) -> None:
