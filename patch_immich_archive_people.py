@@ -39,20 +39,44 @@ TARGET_PATH_IN_CONTAINER = "/usr/src/app/server/dist/repositories/person.reposit
 
 MARKER = "// [archive-people-patch] visibility restriction removed from People queries\n"
 
-# (description, old, new) -- applied in order. `old` must appear at least once; if it doesn't,
-# the whole patch aborts without writing anything (see main()).
+# (description, old, new, expected_count) -- applied in order. `old` must appear EXACTLY
+# expected_count times; any other number aborts the whole patch without writing anything
+# (see main()).
+#
+# The exact count matters, and is not paranoia. Through v3.1.0 the first entry below matched
+# two call sites at once -- getAllForUser() and getStatistics() shared a byte-identical join
+# tail -- and the check was merely "at least one". v3.2.0's cluster-groups rework added an
+# owner/shared-album predicate to getStatistics() only, so its tail stopped ending at
+# `null))`, the shared pattern silently fell from 2 matches to 1, and the patch reported
+# success having left getStatistics() fully restricted: every person's photo count silently
+# dropped to timeline-visibility assets only. An exact count turns that class of upstream
+# drift back into the loud failure this script promises in its docstring.
 PATCHES = [
     (
-        "getAllForUser() + getStatistics() shared join tail",
+        "getAllForUser() join tail",
         "            .on('asset.visibility', '=', kysely_1.sql.lit(enum_1.AssetVisibility.Timeline))\n"
         "            .on('asset.deletedAt', 'is', null))",
         "            .on('asset.deletedAt', 'is', null))",
+        1,
+    ),
+    (
+        # Split from the entry above in v3.2.0 -- see the note on drift. The trailing
+        # `.on((eb) => eb.or(` is what distinguishes this site from getAllForUser()'s, so it
+        # is matched (and re-emitted) verbatim rather than trimmed to the deletedAt line.
+        "getStatistics() join tail",
+        "            .on('asset.visibility', '=', kysely_1.sql.lit(enum_1.AssetVisibility.Timeline))\n"
+        "            .on('asset.deletedAt', 'is', null)\n"
+        "            .on((eb) => eb.or(",
+        "            .on('asset.deletedAt', 'is', null)\n"
+        "            .on((eb) => eb.or(",
+        1,
     ),
     (
         "getNumberOfPeople() where-clause tail",
         "            .where('asset.visibility', '=', kysely_1.sql.lit(enum_1.AssetVisibility.Timeline))\n"
         "            .where('asset.deletedAt', 'is', null)))))",
         "            .where('asset.deletedAt', 'is', null)))))",
+        1,
     ),
 ]
 
@@ -93,13 +117,14 @@ def main() -> int:
 
         new_content = content
         total_replacements = 0
-        for desc, old, new in PATCHES:
+        for desc, old, new, expected in PATCHES:
             count = new_content.count(old)
-            if count == 0:
+            if count != expected:
                 log(
-                    f"FAIL: pattern not found for {desc!r} -- upstream code likely changed "
-                    f"since this patch was written. Not touching the file. Needs a human to "
-                    f"re-derive the patch against the current dist/repositories/person.repository.js."
+                    f"FAIL: pattern for {desc!r} matched {count} time(s), expected {expected} "
+                    f"-- upstream code likely changed since this patch was written. Not touching "
+                    f"the file. Needs a human to re-derive the patch against the current "
+                    f"dist/repositories/person.repository.js."
                 )
                 return 1
             new_content = new_content.replace(old, new)
