@@ -6,7 +6,7 @@ face-tagging name-suggestion list, their own "X photos" count, and even their ow
 page** — even though the tag itself works perfectly (it's fully saved, searchable, and
 functional).
 
-Not affiliated with Immich. Tested against Immich v3.1.0.
+Not affiliated with Immich. Tested against Immich v3.1.0 and v3.2.4.
 
 ## The bugs
 
@@ -40,9 +40,17 @@ TypeScript source.
 
 ## The fix
 
-Two **runtime patches applied to the already-running container** — not a fork, not a custom
+Three **runtime patches applied to the already-running container** — not a fork, not a custom
 Docker image, no Node/pnpm build toolchain required — plus a watcher that keeps both applied
 across restarts and upgrades.
+
+- **`patch_immich_archive_partners.py`** (backend, needed on Immich 3.2.x) — in 3.2.x the
+  person page asks for `{personId, withPartners: true}` with no `visibility`, and the server's
+  `timeBucketChecks()` rejects `withPartners` unless visibility is Timeline, so archived-only
+  people show a count over an empty grid. This patch allows that combination and changes the
+  owner filter to *your assets (timeline + archive) OR partners' assets (timeline only)*, so
+  partner sharing keeps working and a partner's archive is never exposed. Same rules as the
+  others: exact-match text replacement, idempotent marker, fails loudly if upstream changed.
 
 - **`patch_immich_archive_people.py`** (backend) — copies `person.repository.js` out of the
   `immich_server` container, removes the three `visibility = Timeline` clauses via precise
@@ -93,6 +101,7 @@ git clone https://github.com/<you>/immich-archive-people-patch.git
 cd immich-archive-people-patch
 python3 patch_immich_archive_people.py            # applies the backend fix right now
 python3 patch_immich_archive_people_frontend.py    # applies the frontend fix right now
+python3 patch_immich_archive_partners.py           # Immich 3.2.x: person page + partner sharing
 ```
 
 Then install the watcher so both survive restarts/upgrades:
