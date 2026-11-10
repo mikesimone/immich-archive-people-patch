@@ -6,7 +6,8 @@ face-tagging name-suggestion list, their own "X photos" count, and even their ow
 page** — even though the tag itself works perfectly (it's fully saved, searchable, and
 functional).
 
-Not affiliated with Immich. Tested against Immich v3.1.0 and v3.2.4.
+Not affiliated with Immich. Tested against Immich v3.1.0, v3.2.4, v3.3.0 and v3.4.0. Each script carries one pattern set per
+build style and applies the first that matches exactly; an unknown release fails loudly and changes nothing.
 
 ## The bugs
 
@@ -44,16 +45,17 @@ Three **runtime patches applied to the already-running container** — not a for
 Docker image, no Node/pnpm build toolchain required — plus a watcher that keeps both applied
 across restarts and upgrades.
 
-- **`patch_immich_archive_partners.py`** (backend, needed on Immich 3.2.x) — in 3.2.x the
-  person page asks for `{personId, withPartners: true}` with no `visibility`, and the server's
-  `timeBucketChecks()` rejects `withPartners` unless visibility is Timeline, so archived-only
-  people show a count over an empty grid. This patch allows that combination and changes the
+- **`patch_immich_archive_partners.py`** (backend, needed from Immich 3.2.x) — the
+  person page asks for `{personId, withPartners: true}` with no `visibility`. Through 3.3 the server's
+  `timeBucketChecks()` rejects that with a 400; from 3.4 it silently forces visibility to Timeline
+  instead. Either way archived-only people show a count over an empty grid. This patch allows that combination and changes the
   owner filter to *your assets (timeline + archive) OR partners' assets (timeline only)*, so
   partner sharing keeps working and a partner's archive is never exposed. Same rules as the
   others: exact-match text replacement, idempotent marker, fails loudly if upstream changed.
 
 - **`patch_immich_archive_people.py`** (backend) — copies `person.repository.js` out of the
-  `immich_server` container, removes the three `visibility = Timeline` clauses via precise
+  `immich_server` container, removes the `visibility = Timeline` restrictions (three call sites through 3.2, two in 3.3; in 3.4 a single shared
+  `asset_face.assetVisibility` filter, widened to timeline + archive so locked-folder faces stay out) via precise
   string replacement, copies it back, and restarts the container to load it. Idempotent
   (checks for a marker comment before touching anything) and **fails loudly** — if a future
   Immich release changes the exact query text this targets, the script reports exactly which
@@ -101,7 +103,7 @@ git clone https://github.com/<you>/immich-archive-people-patch.git
 cd immich-archive-people-patch
 python3 patch_immich_archive_people.py            # applies the backend fix right now
 python3 patch_immich_archive_people_frontend.py    # applies the frontend fix right now
-python3 patch_immich_archive_partners.py           # Immich 3.2.x: person page + partner sharing
+python3 patch_immich_archive_partners.py           # Immich 3.2+: person page + partner sharing
 ```
 
 Then install the watcher so both survive restarts/upgrades:
