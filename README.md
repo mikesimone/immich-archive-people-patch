@@ -41,7 +41,7 @@ TypeScript source.
 
 ## The fix
 
-Three **runtime patches applied to the already-running container** — not a fork, not a custom
+Four **runtime patches applied to the already-running container** — not a fork, not a custom
 Docker image, no Node/pnpm build toolchain required — plus a watcher that keeps both applied
 across restarts and upgrades.
 
@@ -52,6 +52,12 @@ across restarts and upgrades.
   owner filter to *your assets (timeline + archive) OR partners' assets (timeline only)*, so
   partner sharing keeps working and a partner's archive is never exposed. Same rules as the
   others: exact-match text replacement, idempotent marker, fails loudly if upstream changed.
+
+- **`patch_immich_archive_search.py`** (backend, Immich 3.4+) — the mobile app sends every search with
+  `visibility: timeline` (or `archive`, meaning archive *only*, when "Search archives" is ticked), so archived
+  photos never show up in a normal phone search. This patch makes a search for `timeline` match timeline *or*
+  archive in the shared search builder. Explicit `archive`/`locked`/`hidden` are unchanged, and the timeline itself
+  is a different query, so archive still keeps things off your timeline.
 
 - **`patch_immich_archive_people.py`** (backend) — copies `person.repository.js` out of the
   `immich_server` container, removes the `visibility = Timeline` restrictions (three call sites through 3.2, two in 3.3; in 3.4 a single shared
