@@ -170,3 +170,8 @@ cache-busting cascade described above — and confirm their photos actually rend
 ## License
 
 MIT.
+
+## Also here
+
+- [`userscripts/immich-remove-from-album.user.js`](userscripts/): remove a photo from one album straight from the asset
+  viewer's "Appears in" list (stopgap until the upstream web change lands).
