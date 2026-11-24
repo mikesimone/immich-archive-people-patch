@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Immich: remove from album in "Appears in"
 // @namespace    https://github.com/mikesimone/immich-remove-from-album
-// @version      1.0.0
+// @version      1.0.1
 // @description  Adds a remove button to each album in the asset detail panel's "Appears in" list, so a misfiled photo can be pulled out of one album without opening that album. Undo included.
 // @author       mikesimone
 // @license      MIT
@@ -106,6 +106,8 @@
     .${MARK}-btn[data-state="busy"] { opacity: .6; cursor: progress; }
     .${MARK}-btn[data-state="removed"] { opacity: 1; border-color: currentColor; }
     .${MARK}-btn[data-state="error"] { opacity: 1; color: #fff; background: #b45309; }
+    .${MARK}-row > div:first-child { flex: none; }
+    .${MARK}-row > .my-auto { min-width: 0; }
     .${MARK}-gone img, .${MARK}-gone p, .${MARK}-gone .text-sm { opacity: .4; }
     .${MARK}-gone p { text-decoration: line-through; }
     @media (hover: none) { .${MARK}-btn { opacity: .8; } }
@@ -200,6 +202,7 @@
       }
     });
 
+    row.classList.add(`${MARK}-row`);
     row.appendChild(btn);
   };
 
