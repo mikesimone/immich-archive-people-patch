@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Also re-applies patch_immich_remove_from_album.py (serves the remove-from-album add-on from
+# Immich's own index.html; it restarts once when it changes index.html, like the frontend patch).
+#
 # Watches for immich_server (re)starting -- including immich-auto-upgrade.service pulling a
 # new image -- and re-applies both archive-people patches against the fresh container: the
 # backend query patch (patch_immich_archive_people.py) and the frontend static-asset patch
@@ -27,6 +30,7 @@ PATCH_SCRIPT="$SCRIPT_DIR/patch_immich_archive_people.py"
 FRONTEND_PATCH_SCRIPT="$SCRIPT_DIR/patch_immich_archive_people_frontend.py"
 PARTNERS_PATCH_SCRIPT="$SCRIPT_DIR/patch_immich_archive_partners.py"
 SEARCH_PATCH_SCRIPT="$SCRIPT_DIR/patch_immich_archive_search.py"
+REMOVE_FROM_ALBUM_PATCH_SCRIPT="$SCRIPT_DIR/patch_immich_remove_from_album.py"
 
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
@@ -73,5 +77,10 @@ while read -r _; do
         log "frontend patch check/apply completed successfully"
     else
         log "FRONTEND PATCH FAILED -- see output above. The person-detail page may only show timeline-visibility photos again. This needs a human to check whether upstream Immich changed the code this patch targets."
+    fi
+    if python3 "$REMOVE_FROM_ALBUM_PATCH_SCRIPT" --container "$IMMICH_CONTAINER"; then
+        log "remove-from-album patch check/apply completed successfully"
+    else
+        log "REMOVE-FROM-ALBUM PATCH FAILED -- see output above. The remove buttons in the asset viewer's Appears in list are gone until a human checks what upstream Immich changed in index.html."
     fi
 done

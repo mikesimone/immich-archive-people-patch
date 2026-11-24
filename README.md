@@ -173,5 +173,7 @@ MIT.
 
 ## Also here
 
-- [`userscripts/immich-remove-from-album.user.js`](userscripts/): remove a photo from one album straight from the asset
-  viewer's "Appears in" list (stopgap until the upstream web change lands).
+- **`patch_immich_remove_from_album.py`** + [`userscripts/immich-remove-from-album.user.js`](userscripts/): a remove
+  button next to each album in the asset viewer's "Appears in" list, so a misfiled photo can leave one album without
+  opening it. The patch serves the script from Immich's own index.html (every browser gets it, nothing to install);
+  the watcher re-applies it after restarts and upgrades. Stopgap until the upstream web change lands.
